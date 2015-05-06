@@ -1,0 +1,30 @@
+<?php
+
+/**
+ * @file
+ * Schema and update function for the module.
+ */
+
+/**
+ * Implements hook_field_schema().
+ */
+function jwpvp_field_schema() {
+  return array(
+    'columns' => array(
+      'video_id' => array(
+        'type' => 'varchar',
+        'length' => 255,
+        'not null' => FALSE
+      ),
+    ),
+  );
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function jwpvp_uninstall() {
+  variable_del('jwpvp_bc_read_key');
+  variable_del('jwpvp_bc_cache');
+  variable_del('jwpvp_player_js');
+}

@@ -1,0 +1,34 @@
+JWPlayer Video Player (JWPVP)
+------------------------------
+Use this module to view Brightcove Hosted videos on JWPlayer. Only Progressive
+download (HTTP) Videos are supported.
+
+Requirements
+------------
+
+* Entity API
+  http://drupal.org/project/entity
+
+* Ctools
+  http://drupal.org/project/ctools
+
+* JWPLAYER Cloud hosted Player URL
+  http://www.jwplayer.com
+
+* External libraries: Brightcove PHP MAPI Wrapper
+  https://github.com/BrightcoveOS/PHP-MAPI-Wrapper
+
+Installation & Usage
+--------------------
+
+Download and enable Entity API module (version >= 1.3).
+Download and enable Ctools.
+Download Brightcove PHP MAPI Wrapper from https://github.com/BrightcoveOS/PHP-MAPI-Wrapper, module is tested with PHP MAPI Wrapper 2.0.4 and later.
+Unzip framework to sites/all/libraries/*. IF you use a different location, make sure you know the path to bc-mapi.php
+Enable JWPVP module.
+Get Read Keys with URL Access from your Brightcove Account settings.
+Get JWPLAYER Cloud hosted player URL from your JWPLAYER Account settings.
+Navigate to admin/config/media/jwpvp and fill in your Brightcove Read Key and JWPLAYER Player URL.
+Create a new field of type "JWPlayer Video Player" with	"JWPlayer" widget.
+
+Enjoy!

@@ -1,0 +1,399 @@
+<?php
+
+/**
+ * @file
+ * JWPVP module provides a way to view brightcove hosted videos using JWPLAYER.
+ */
+/**
+ * Include helper methods.
+ */
+module_load_include('inc', 'jwpvp', 'jwpvp.helpers');
+
+/**
+ * Implements hook_menu().
+ */
+function jwpvp_menu() {
+  $items = array();
+
+  //field autocomplete API.
+  $items['jwpvp/autocomplete/video/%'] = array(
+    'title' => 'jwpvp field autocomplete',
+    'page callback' => 'jwpvp_bc_video_field_autocomplete',
+    'page arguments' => array(3, 4),
+    'access callback' => 'user_access',
+    'access arguments' => array('administer nodes'),
+    'file' => 'jwpvp.helpers.inc',
+    'type' => MENU_CALLBACK,
+  );
+
+  //Config page.
+  $items['admin/config/media/jwpvp'] = array(
+    'title' => 'JWPlayer settings',
+    'description' => 'Configure api keys & player settings.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('jwpvp_admin_settings'),
+    'access arguments' => array('administer site configuration'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_field_info().
+ */
+function jwpvp_field_info() {
+  return array(
+    'jwpvp_field' => array(
+      'label' => t('JWPlayer Video Player'),
+      'description' => t('JWPlayer video field.'),
+      'settings' => array(),
+      'instance_settings' => array(
+        'autoplay' => FALSE,
+      ),
+      'default_widget' => 'jwpvp_widget',
+      'default_formatter' => 'jwpvp_formatter',
+      'property_type' => 'jwpvp_field',
+      'property_callbacks' => array('jwpvp_field_value_property_info_callback'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_is_empty().
+ */
+function jwpvp_field_is_empty($item, $field) {
+  return empty($item['video_id']);
+}
+
+/**
+ * Implements hook_formatter_info().
+ */
+function jwpvp_field_formatter_info() {
+  $formatters = array();
+
+  //Simple player with no colorbox.
+  $formatters['jwpvp_formatter'] = array(
+    'label' => t('Standard JWPlayer'),
+    'field types' => array('jwpvp_field'),
+    'settings' => array(
+      'jwplayer_width' => 640,
+      'jwplayer_height' => 480,
+      'jwplayer_autoplay' => TRUE,
+    ),
+  );
+
+  return $formatters;
+}
+
+/**
+ * Implements hook_widget_info().
+ */
+function jwpvp_field_widget_info() {
+  return array(
+    'jwpvp_widget' => array(
+      'label' => t('JWPlayer'),
+      'field types' => array('jwpvp_field'),
+      'behaviors' => array(
+        'default value' => FIELD_BEHAVIOR_NONE,
+      ),
+    ),
+  );
+}
+
+/**
+ * Implements hook_field_widget_form().
+ */
+function jwpvp_field_widget_form(&$form, &$form_state, $field, $instance, $langcode, $items, $delta, $element) {
+
+  if ($instance['widget']['type'] == "jwpvp_widget") {
+    $el = array();
+
+    //Form field which takes the brightcove video id.
+    $el['video_id'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Brightcove Video'),
+      '#maxlength' => 255,
+      '#default_value' => isset($items[$delta]['video_id']) ? $items[$delta]['video_id'] : NULL,
+      '#value_callback' => 'jwpvp_field_videoid_value',
+      '#autocomplete_path' => 'jwpvp/autocomplete/video/field',
+      '#element_validate' => array(
+        'jwpvp_bc_video_field_validate',
+      ),
+    );
+
+    $element += $el;
+
+    return $element;
+  }
+}
+
+/**
+ * Form builder for config page.
+ *
+ * @ingroup forms
+ * @see system_settings_form()
+ */
+function jwpvp_admin_settings() {
+
+  $form = array();
+  $form['bc'] = array(
+    '#type' => 'fieldset',
+    '#title' => t('Brightcove settings'),
+    '#collapsible' => TRUE,
+    '#collapsed' => FALSE,
+  );
+
+  //The Read key value form field.
+  $form['bc']['jwpvp_bc_read_key'] = array(
+    '#type' => 'textfield',
+    '#title' => t('Brightcove API Read key'),
+    '#maxlength' => 255,
+    '#required' => TRUE,
+    '#default_value' => variable_get('jwpvp_bc_read_key', ''),
+  );
+
+  $time_slots = array('1800' => '30 Minutes', '3600' => '1 Hours', '21600' => '6 Hours', '43200' => '12 Hours', '86400' => '24 Hours');
+
+  // Available cache settings form.
+  $form['bc']['bc_cache'] = array(
+    '#type' => 'select',
+    '#title' => t('Brightcove Cache'),
+    '#options' => $time_slots,
+    '#required' => TRUE,
+    '#default_value' => variable_get('bc_cache', '1800'),
+  );
+
+  $form['bc']['clear_cache'] = array(
+    '#type' => 'submit',
+    '#value' => t('Clear Brightcove Cache'),
+    '#submit' => array('jwpvp_clear_bc_cache_submit'),
+  );
+
+  // JWPlayer licence key.
+  $form['jwpvp_player_js'] = array(
+    '#type' => 'textfield',
+    '#title' => t('JWPLAYER Cloud hosted player URL'),
+    '#description' => t('Enter your JWPLAYER js url. This URL can be found on your JWPlayer account page.'),
+    '#default_value' => variable_get('jwpvp_player_js', NULL),
+  );
+
+  //Validation callback.
+  $form['#validate'][] = 'jwpvp_admin_settings_validate';
+
+  return system_settings_form($form);
+}
+
+/**
+ * Submit handler for the clear brightcove cache button on settings page.
+ */
+function jwpvp_clear_bc_cache_submit($form, &$form_state) {
+  cache_clear_all('bc_video_', 'cache', $wildcard = TRUE);
+  cache_clear_all('bc_playlist_', 'cache', $wildcard = TRUE);
+  drupal_set_message(t('JWPVP caches cleared.'));
+}
+
+/**
+ * Form Validation.
+ * @param type $form
+ * @param type $form_state
+ */
+function jwpvp_admin_settings_validate($form, &$form_state) {
+  $output = jwpvp_verify_bc_tokens($form_state['values']['jwpvp_bc_read_key']);
+
+  if ($output != TRUE) {
+    form_set_error('jwpvp_bc_read_key', t('Invalid Brightcove read key.'));
+  }
+
+  if (!valid_url($form_state['values']['jwpvp_player_js'])) {
+    form_set_error('jwpvp_player_js', t('Invalid URL.'));
+  }
+}
+
+/**
+ * Implements hook_field_formatter_settings_form().
+ */
+function jwpvp_field_formatter_settings_form($field, $instance, $view_mode, $form, &$form_state) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $element = array();
+
+  // Formatter settings for each formatter.
+  switch ($display['type']) {
+    case 'jwpvp_formatter':
+
+      $element['jwplayer_width'] = array(
+        '#title' => t('Select width'),
+        '#type' => 'textfield',
+        '#default_value' => ($settings['jwplayer_width']) ? $settings['jwplayer_width'] : FALSE,
+      );
+      $element['jwplayer_height'] = array(
+        '#title' => t('Select height'),
+        '#type' => 'textfield',
+        '#default_value' => ($settings['jwplayer_height']) ? $settings['jwplayer_height'] : FALSE,
+      );
+      $element['jwplayer_autoplay'] = array(
+        '#title' => t('Autoplay'),
+        '#type' => 'checkbox',
+        '#default_value' => ($settings['jwplayer_autoplay']) ? $settings['jwplayer_autoplay'] : FALSE,
+      );
+      break;
+
+    default:
+      break;
+  }
+  return $element;
+}
+
+/**
+ * Implements hook_field_formatter_settings_summary().
+ */
+function jwpvp_field_formatter_settings_summary($field, $instance, $view_mode) {
+  $display = $instance['display'][$view_mode];
+  $settings = $display['settings'];
+
+  $summary = '';
+
+  //This summary is displayed on formatter settings page.
+  if ($display['type'] == 'jwpvp_formatter') {
+    $summary = t('Resolution: @width x @height', array('@width' => $settings['jwplayer_width'], '@height' => $settings['jwplayer_height']));
+    $summary .= '<br />';
+    $summary .= t('Autoplay: @autoplay', array('@autoplay' => ($settings['jwplayer_autoplay'] == '1' ? "Yes" : "No")));
+  }
+  return $summary;
+}
+
+/**
+ * Implements hook_field_formatter_view().
+ */
+function jwpvp_field_formatter_view($entity_type, $entity, $field, $instance, $langcode, $items, $display) {
+  $element = array();
+
+  if ($display['type'] == 'jwpvp_formatter') {
+    // Process files for the theme function.
+    $files = array();
+    foreach ($items as $delta => $item) {
+      $files[$delta] = (object) $item;
+    }
+    foreach ($files as $delta => $file) {
+      $element[$delta] = array(
+        '#theme' => 'jwpvp_standard',
+        '#file_object' => $file,
+        '#options' => $display['settings'],
+      );
+    }
+  }
+
+  if ($display['type'] == 'jwpvp_formatter') {
+    // Attach required js & css only for standalone video formatter.
+    $element['#attached']['js'][variable_get('jwpvp_player_js')] = array(
+      'type' => 'file',
+      'preprocess' => FALSE,
+    );
+    $element['#attached']['js'][] = array(
+      'data' => 'jwplayer.key="' . variable_get('jw_player_key', NULL) . '"',
+      'type' => 'inline',
+    );
+  }
+
+  return $element;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function jwpvp_theme() {
+
+  return array('jwpvp_standard' => array(
+      'variables' => array(
+        'file_object' => NULL,
+        'options' => array(),
+        'node_id' => '',
+      ),
+      'template' => 'theme/jwpvp_standard',
+    ),
+  );
+}
+
+/**
+ * Preprocess standard jwplayer.
+ *
+ * The main reason for the preprocessing is to generate an array of
+ * video detais that can be used by jwplayer.
+ *
+ * @param type $variables
+ */
+function template_preprocess_jwpvp_standard(&$variables) {
+
+  $field_value = $variables['file_object'];
+  $video_ids = array();
+
+  //Video id from field
+  if (isset($field_value->video_id)) {
+    $video_ids[] = $field_value->video_id;
+  }
+
+  //Generate video metadata for playlists.
+  foreach ($video_ids as $key => $video_item) {
+    $video_details = jwpvp_bc_video_load($video_item);
+
+    // Check if the video details were pulled or not.
+    if (isset($video_details)) {
+      $playlist_item = array();
+      $playlist_item['title'] = $video_details->name;
+      // This image is displayed before the video is played.
+      $playlist_item['image'] = $video_details->videoStillURL;
+
+      if (isset($video_details->renditions) && !empty($video_details->renditions)) {
+        // Generate renditions array for each quality/resolution type.
+        foreach ($video_details->renditions as $arrkey => $rendition) {
+          $playlist_item['sources'][$arrkey] = array(
+            'file' => $rendition->url,
+            'type' => 'video/' . strtolower($rendition->videoContainer),
+            'label' => $rendition->frameWidth . 'x' . $rendition->frameHeight,
+          );
+        }
+      }
+      elseif (!empty($video_details->videoFullLength->url) && ($video_details->videoFullLength->videoContainer != 'FLV')) {
+        // If renditions are not available, use other options.
+        $video = $video_details->videoFullLength;
+        $playlist_item['sources'][0] = array(
+          'file' => $video->url,
+          'type' => 'video/' . strtolower($video->videoContainer),
+          'label' => $rendition->frameWidth . 'x' . $rendition->frameHeight,
+        );
+      }
+    }
+    //Attach playlists array to main.
+    $var[] = $playlist_item;
+  }
+
+  //Set width, height, autostart, aspectratio.
+  $variables['player']['width'] = $variables['options']['jwplayer_width'];
+  $variables['player']['height'] = $variables['options']['jwplayer_height'];
+  $variables['player']['autostart'] = $variables['options']['jwplayer_autoplay'] == '1' ? "true" : "false";
+
+  // Generate Playlist
+  $variables['player']['playlist'] = $var;
+  $variables['player']['html_id'] = drupal_html_id('jwplayer' . $video_ids[0] . rand(1, 999));
+
+  //Disable fallbacks.
+  $variables['player']['fallback'] = 'false';
+
+  //Hide Title.
+  $variables['player']['displaytitle'] = 'false';
+
+  $variables['player']['jw_player_inline_js_code'] = stripslashes(json_encode($variables['player']));
+}
+
+/**
+ * Validate the dimensions set in formatter.
+ *
+ * @param type $element
+ */
+function jwpvp_field_formatter_dimension_validate($element) {
+  if (!is_numeric($element['#value']) && $element['value'] < 180) {
+    form_error($element, t('The video width must be a number, greater than 180'));
+  }
+}
